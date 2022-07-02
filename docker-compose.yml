@@ -1,0 +1,167 @@
+services:
+
+  microservices-eureka-server:
+    container_name: eureka-server
+    image: microservices/eureka-server
+    networks:
+      - microservices
+
+  microservices-customer:
+    container_name: customer-application
+    image: microservices/customer
+    networks:
+      - microservices
+      - postgres
+    ports:
+      - 8090:8090
+    depends_on:
+      - microservices-eureka-server
+      - postgres
+
+  microservices-fraud:
+    container_name: fraud-application
+    image: microservices/fraud
+    networks:
+      - microservices
+      - mongo
+    ports:
+      - 8092:8092
+    depends_on:
+      - microservices-eureka-server
+      - mongodb_container
+      - rabbitmq
+
+  microservices-notification:
+    container_name: notification-application
+    image: microservices/notification
+    networks:
+      - microservices
+    depends_on:
+      - rabbitmq
+
+  postgres:
+    container_name: postgres
+    image: postgres
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: root
+      PGDATA: /data/postgres
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/customer
+    volumes:
+      - postgres:/data/postgres
+    ports:
+      - "5433:5432"
+    networks:
+      - postgres
+    restart: unless-stopped
+
+  pgadmin:
+    container_name: pgadmin
+    image: dpage/pgadmin4
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-pgadmin4@pgadmin.org}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    volumes:
+      - pgadmin:/var/lib/pgadmin
+    ports:
+      - "5050:80"
+    networks:
+      - postgres
+    restart: unless-stopped
+
+  mongodb_container:
+    container_name: mongodb
+    image: mongo:latest
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: rootpassword
+    ports:
+      - 27018:27017
+    volumes:
+      - mongodb_data_container:/data/db
+    networks:
+      - mongo
+
+  rabbitmq:
+    image: rabbitmq:management
+    container_name: rabbitmq
+    ports:
+      - 5673:5672
+      - 15673:15672
+    volumes:
+      - ~/.docker-conf/rabbitmq/data/:/var/lib/rabbitmq/
+      - ~/.docker-conf/rabbitmq/log/:/var/log/rabbitmq
+    networks:
+      - microservices
+
+  storage:
+    image: ghcr.io/openzipkin/zipkin-mysql:latest
+    container_name: mysql
+    networks:
+      - microservices
+    ports:
+      - 3307:3306
+
+  zipkin:
+    image: ghcr.io/openzipkin/zipkin-slim:latest
+    container_name: zipkin
+    ports:
+      - 9411:9411
+    depends_on:
+      - storage
+    networks:
+      - microservices
+
+  dependencies:
+    image: openzipkin/zipkin-dependencies
+    container_name: dependencies
+    entrypoint: crond -f
+    environment:
+      - STORAGE_TYPE=mysql
+      - MYSQL_HOST=mysql
+      - MYSQL_USER=zipkin
+      - MYSQL_PASS=zipkin
+    depends_on:
+      - storage
+    networks:
+      - microservices
+
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    ports:
+      - 9090:9090
+    depends_on:
+      - storage
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - microservices
+
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    ports:
+      - 3000:3000
+    depends_on:
+      - prometheus
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    networks:
+      - microservices
+
+networks:
+  postgres:
+    driver: bridge
+  microservices:
+    driver: bridge
+  mongo:
+    driver: bridge
+
+volumes:
+  postgres:
+  pgadmin:
+  mongodb_data_container:
+  mysql:
